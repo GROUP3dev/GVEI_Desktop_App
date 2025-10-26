@@ -148,9 +148,4 @@ For academic and demonstration purposes
 
 ```
 
----
 
-If you want, I can also **add a polished “portfolio-ready” version** with badges, a highlighted project description, and table formatting so it looks professional on GitHub.  
-
-Do you want me to make that version too?
-```
