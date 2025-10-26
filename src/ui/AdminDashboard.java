@@ -1,35 +1,34 @@
 package ui;
 
-import db.DBConnection; // Assumes you have this class
+import db.DBConnection;
 import java.awt.*;
 import java.awt.event.*;
+import java.io.*;
 import java.sql.*;
 
 /**
  * Admin Dashboard - AWT Version (Full CRUD Refactor)
  * -----------------
- * - Top MenuBar for navigation.
- * - View users, vehicles, exchange offers in a formatted TextArea.
- * - Context-aware CRUD buttons (Add, Update, Delete) at the bottom.
- * - Safe operations using modal Dialogs for add, update, and delete confirmation.
- * - Approve/reject selected offers (specific to Offers view).
- * - Horizontal bar chart showing both count and total value of approved offers.
+ * - Uses StatsReportPanel for modular reporting.
+ * - Adds search/filter functionality for data views.
+ * - Adds export functionality (to .csv/.txt).
  */
 public class AdminDashboard extends Frame implements ActionListener {
 
     // --- State & Components ---
     private TextArea taData;
-    private Button btnLoadUsers, btnLoadVehicles, btnLoadOffers;
-    private Button btnApprove, btnReject; // For offers
-    private Button btnAdd, btnUpdate, btnDelete; // CRUD Buttons
+    private Button btnLoadUsers, btnLoadVehicles, btnLoadPendingOffers, btnLoadAllOffers;
+    private Button btnApprove, btnReject;
+    private Button btnAdd, btnUpdate, btnDelete, btnExport;
     private Button btnShowChart, btnHideChart, btnRefreshStats;
-    private StatsCanvas statsCanvas;
-    private Label lblStatus; // Status bar
 
-    /**
-     * Tracks the current data being viewed ("USERS", "VEHICLES", "OFFERS")
-     * to make the CRUD buttons context-aware.
-     */
+    // Search/Filter Components
+    private TextField txtSearch;
+    private Button btnSearch;
+
+    private StatsReportPanel statsPanel;
+    private Label lblStatus;
+
     private String currentView = "";
 
     // --- MenuBar Components ---
@@ -38,11 +37,12 @@ public class AdminDashboard extends Frame implements ActionListener {
     private MenuItem itemShowStats, itemHideStats, itemRefreshStats, itemExit;
     private MenuItem itemLoadUsers, itemAddUser;
     private MenuItem itemLoadVehicles, itemAddVehicle;
-    private MenuItem itemLoadOffers;
+    private MenuItem itemLoadPendingOffers, itemLoadAllOffers;
+    private MenuItem itemExportData;
 
     public AdminDashboard() {
         setTitle("GVEI - Admin Dashboard");
-        setSize(900, 700); // Increased height for new buttons/status
+        setSize(900, 700);
         setLayout(new BorderLayout());
         setResizable(false);
 
@@ -50,22 +50,42 @@ public class AdminDashboard extends Frame implements ActionListener {
         setupMenuBar();
         setMenuBar(menuBar);
 
-        // --- 2. North: Stats Canvas (initially hidden) ---
-        statsCanvas = new StatsCanvas();
-        statsCanvas.setPreferredSize(new Dimension(900, 180)); // Taller for 2 bars
-        statsCanvas.setVisible(false);
-        add(statsCanvas, BorderLayout.NORTH);
+        // --- 2. North Container: Stats and Filter Panels ---
+        Panel northContainer = new Panel(new BorderLayout());
+
+        // 2.1 Stats Panel
+        statsPanel = new StatsReportPanel();
+        statsPanel.setPreferredSize(new Dimension(900, 180));
+        statsPanel.setVisible(false);
+        northContainer.add(statsPanel, BorderLayout.NORTH);
+
+        // 2.2 Filter Panel
+        Panel filterPanel = new Panel(new FlowLayout(FlowLayout.LEFT, 15, 5));
+        filterPanel.setBackground(new Color(240, 240, 240));
+
+        txtSearch = new TextField(30);
+        btnSearch = new Button("Apply Filter/Search");
+        btnSearch.addActionListener(this);
+
+        filterPanel.add(new Label("Filter Current View:"));
+        filterPanel.add(txtSearch);
+        filterPanel.add(btnSearch);
+
+        northContainer.add(filterPanel, BorderLayout.CENTER);
+
+        add(northContainer, BorderLayout.NORTH);
+
 
         // --- 3. Center: Data TextArea ---
         taData = new TextArea(20, 100);
-        taData.setFont(new Font("Monospaced", Font.PLAIN, 12)); // Use Monospaced font
+        taData.setFont(new Font("Monospaced", Font.PLAIN, 12));
         add(taData, BorderLayout.CENTER);
 
         // --- 4. South: Button Panels & Status ---
         Panel southPanel = new Panel(new BorderLayout());
 
-        // Panel for main data-loading and offer buttons
         Panel panelDataButtons = new Panel(new FlowLayout(FlowLayout.CENTER, 5, 5));
+
         btnLoadUsers = new Button("View All Users");
         btnLoadUsers.addActionListener(this);
         panelDataButtons.add(btnLoadUsers);
@@ -74,11 +94,15 @@ public class AdminDashboard extends Frame implements ActionListener {
         btnLoadVehicles.addActionListener(this);
         panelDataButtons.add(btnLoadVehicles);
 
-        btnLoadOffers = new Button("View Pending Offers");
-        btnLoadOffers.addActionListener(this);
-        panelDataButtons.add(btnLoadOffers);
+        btnLoadPendingOffers = new Button("View Pending Offers");
+        btnLoadPendingOffers.addActionListener(this);
+        panelDataButtons.add(btnLoadPendingOffers);
 
-        panelDataButtons.add(new Label(" | ")); // Separator
+        btnLoadAllOffers = new Button("View ALL Offers");
+        btnLoadAllOffers.addActionListener(this);
+        panelDataButtons.add(btnLoadAllOffers);
+
+        panelDataButtons.add(new Label(" | "));
 
         btnApprove = new Button("Approve Selected Offer");
         btnApprove.addActionListener(this);
@@ -88,7 +112,6 @@ public class AdminDashboard extends Frame implements ActionListener {
         btnReject.addActionListener(this);
         panelDataButtons.add(btnReject);
 
-        // Panel for new CRUD buttons
         Panel panelCrudButtons = new Panel(new FlowLayout(FlowLayout.CENTER, 5, 5));
         btnAdd = new Button("Add New...");
         btnAdd.addActionListener(this);
@@ -102,14 +125,20 @@ public class AdminDashboard extends Frame implements ActionListener {
         btnDelete.addActionListener(this);
         panelCrudButtons.add(btnDelete);
 
-        panelCrudButtons.add(new Label(" | ")); // Separator
+        panelCrudButtons.add(new Label(" | "));
 
-        // Panel for Chart controls
-        btnShowChart = new Button("Show Chart");
+        // Export Button
+        btnExport = new Button("Export Data (.csv)");
+        btnExport.addActionListener(this);
+        panelCrudButtons.add(btnExport);
+
+        panelCrudButtons.add(new Label(" | "));
+
+        btnShowChart = new Button("Show Report");
         btnShowChart.addActionListener(this);
         panelCrudButtons.add(btnShowChart);
 
-        btnHideChart = new Button("Hide Chart");
+        btnHideChart = new Button("Hide Report");
         btnHideChart.addActionListener(this);
         panelCrudButtons.add(btnHideChart);
 
@@ -117,11 +146,9 @@ public class AdminDashboard extends Frame implements ActionListener {
         btnRefreshStats.addActionListener(this);
         panelCrudButtons.add(btnRefreshStats);
 
-        // Status bar label
         lblStatus = new Label("Welcome to the Admin Dashboard. Please load some data.", Label.CENTER);
         lblStatus.setBackground(Color.LIGHT_GRAY);
 
-        // Add all button panels and status bar to the south panel
         Panel buttonContainer = new Panel(new GridLayout(2, 1));
         buttonContainer.add(panelDataButtons);
         buttonContainer.add(panelCrudButtons);
@@ -135,15 +162,15 @@ public class AdminDashboard extends Frame implements ActionListener {
         addWindowListener(new WindowAdapter() {
             public void windowClosing(WindowEvent e) {
                 dispose();
-                // new LoginForm(); // uncomment if login form exists
-                System.exit(0); // Force exit for testing
+                System.exit(0);
             }
         });
 
         // Initial state
         updateButtonStates();
         setVisible(true);
-        loadPendingOffers(); // Load offers by default
+        // FIX APPLIED HERE: Pass null to load all pending offers unfiltered
+        loadPendingOffers(null);
     }
 
     private void setupMenuBar() {
@@ -151,17 +178,23 @@ public class AdminDashboard extends Frame implements ActionListener {
 
         // --- Dashboard Menu ---
         menuDashboard = new Menu("Dashboard");
-        itemShowStats = new MenuItem("Show Stats Chart");
+        itemShowStats = new MenuItem("Show Report Panel");
         itemShowStats.addActionListener(this);
         menuDashboard.add(itemShowStats);
 
-        itemHideStats = new MenuItem("Hide Stats Chart");
+        itemHideStats = new MenuItem("Hide Report Panel");
         itemHideStats.addActionListener(this);
         menuDashboard.add(itemHideStats);
 
         itemRefreshStats = new MenuItem("Refresh Stats");
         itemRefreshStats.addActionListener(this);
         menuDashboard.add(itemRefreshStats);
+
+        menuDashboard.addSeparator();
+
+        itemExportData = new MenuItem("Export Current Data (.csv)");
+        itemExportData.addActionListener(this);
+        menuDashboard.add(itemExportData);
 
         menuDashboard.addSeparator();
         itemExit = new MenuItem("Exit");
@@ -190,11 +223,15 @@ public class AdminDashboard extends Frame implements ActionListener {
 
         // --- Offers Menu ---
         menuOffers = new Menu("Manage Offers");
-        itemLoadOffers = new MenuItem("View Pending Offers");
-        itemLoadOffers.addActionListener(this);
-        menuOffers.add(itemLoadOffers);
 
-        // Add menus to bar
+        itemLoadPendingOffers = new MenuItem("View Pending Offers");
+        itemLoadPendingOffers.addActionListener(this);
+        menuOffers.add(itemLoadPendingOffers);
+
+        itemLoadAllOffers = new MenuItem("View ALL Offers (History)");
+        itemLoadAllOffers.addActionListener(this);
+        menuOffers.add(itemLoadAllOffers);
+
         menuBar.add(menuDashboard);
         menuBar.add(menuUsers);
         menuBar.add(menuVehicles);
@@ -205,92 +242,159 @@ public class AdminDashboard extends Frame implements ActionListener {
     public void actionPerformed(ActionEvent e) {
         Object source = e.getSource();
 
-        // Menu or Button actions for loading data
-        if (source == btnLoadUsers || source == itemLoadUsers) loadUsers();
-        else if (source == btnLoadVehicles || source == itemLoadVehicles) loadVehicles();
-        else if (source == btnLoadOffers || source == itemLoadOffers) loadPendingOffers();
+        // Data Loading Actions (FIX: Pass null to load all unfiltered data)
+        if (source == btnLoadUsers || source == itemLoadUsers) loadUsers(null);
+        else if (source == btnLoadVehicles || source == itemLoadVehicles) loadVehicles(null);
+        else if (source == btnLoadPendingOffers || source == itemLoadPendingOffers) loadPendingOffers(null);
+        else if (source == btnLoadAllOffers || source == itemLoadAllOffers) loadAllOffers(null);
 
-            // Offer-specific actions
+            // Search/Filter Action
+        else if (source == btnSearch) applyFilter();
+
+            // Offer Processing
         else if (source == btnApprove) processSelectedOffer("Approved");
         else if (source == btnReject) processSelectedOffer("Rejected");
 
-            // Chart controls
-        else if (source == btnShowChart || source == itemShowStats) statsCanvas.setVisible(true);
-        else if (source == btnHideChart || source == itemHideStats) statsCanvas.setVisible(false);
+            // Report Controls
+        else if (source == btnShowChart || source == itemShowStats) {
+            statsPanel.setVisible(true);
+            statsPanel.refresh();
+        }
+        else if (source == btnHideChart || source == itemHideStats) statsPanel.setVisible(false);
         else if (source == btnRefreshStats || source == itemRefreshStats) {
-            statsCanvas.repaint();
+            statsPanel.refresh();
             lblStatus.setText("Statistics refreshed.");
         }
 
-        // CRUD Actions
+        // Export Action
+        else if (source == btnExport || source == itemExportData) exportCurrentData();
+
+            // CRUD Actions
         else if (source == btnAdd) handleAdd();
         else if (source == btnUpdate) handleUpdate();
         else if (source == btnDelete) handleDelete();
 
-            // Menu "Add" shortcuts
+            // Menu "Add" shortcuts (FIX: Pass null when loading the initial view)
         else if (source == itemAddUser) {
-            loadUsers(); // Switch to user view first
-            handleAdd(); // Open AddUserDialog
+            loadUsers(null);
+            handleAdd();
         } else if (source == itemAddVehicle) {
-            loadVehicles(); // Switch to vehicle view first
-            handleAdd(); // Open AddVehicleDialog
+            loadVehicles(null);
+            handleAdd();
         }
     }
 
     /**
-     * Updates the enabled/disabled state of buttons based on the currentView.
+     * Triggers the reload of the current view with the applied filter from txtSearch.
      */
+    private void applyFilter() {
+        String filter = txtSearch.getText().trim();
+        if (filter.isEmpty()) {
+            lblStatus.setText("Filter cleared. Reloading " + currentView + ".");
+        } else {
+            lblStatus.setText("Applying filter: '" + filter + "' to " + currentView + ".");
+        }
+
+        switch (currentView) {
+            case "USERS":
+                loadUsers(filter);
+                break;
+            case "VEHICLES":
+                loadVehicles(filter);
+                break;
+            case "OFFERS":
+                loadPendingOffers(filter);
+                break;
+            case "ALL_OFFERS":
+                loadAllOffers(filter);
+                break;
+            default:
+                lblStatus.setText("Cannot filter. No view is currently loaded.");
+        }
+    }
+
+    // --- Export Method ---
+    private void exportCurrentData() {
+        String data = taData.getText();
+        if (data.trim().isEmpty() || currentView.isEmpty()) {
+            lblStatus.setText("Cannot export empty data or when no view is loaded.");
+            return;
+        }
+
+        // Use FileDialog for saving (Standard AWT component)
+        FileDialog fileDialog = new FileDialog(this, "Save Data as CSV/TXT", FileDialog.SAVE);
+        fileDialog.setFile("export_" + currentView.toLowerCase() + ".csv");
+        fileDialog.setVisible(true);
+
+        String filename = fileDialog.getFile();
+        String directory = fileDialog.getDirectory();
+
+        if (filename == null || directory == null) {
+            lblStatus.setText("Export canceled.");
+            return;
+        }
+
+        File file = new File(directory, filename);
+        try (PrintWriter writer = new PrintWriter(new FileWriter(file))) {
+            // Write the contents of the TextArea directly to the file
+            writer.print(data);
+            lblStatus.setText("✅ Data successfully exported to: " + file.getAbsolutePath());
+        } catch (IOException ex) {
+            lblStatus.setText("Error saving file: Check console for path errors.");
+            System.err.println("File Save Error: " + ex.getMessage());
+        }
+    }
+
     private void updateButtonStates() {
         switch (currentView) {
             case "USERS":
-                btnApprove.setEnabled(false);
-                btnReject.setEnabled(false);
-                btnAdd.setEnabled(true);
-                btnUpdate.setEnabled(true);
-                btnDelete.setEnabled(true);
-                btnAdd.setLabel("Add User...");
-                break;
             case "VEHICLES":
                 btnApprove.setEnabled(false);
                 btnReject.setEnabled(false);
                 btnAdd.setEnabled(true);
                 btnUpdate.setEnabled(true);
                 btnDelete.setEnabled(true);
-                btnAdd.setLabel("Add Vehicle...");
+                btnExport.setEnabled(true);
+                btnAdd.setLabel(currentView.equals("USERS") ? "Add User..." : "Add Vehicle...");
                 break;
             case "OFFERS":
                 btnApprove.setEnabled(true);
                 btnReject.setEnabled(true);
-                // CRUD is disabled for Offers (use Approve/Reject)
                 btnAdd.setEnabled(false);
                 btnUpdate.setEnabled(false);
                 btnDelete.setEnabled(false);
+                btnExport.setEnabled(true);
                 btnAdd.setLabel("Add New...");
                 break;
-            default: // No view selected
+            case "ALL_OFFERS":
                 btnApprove.setEnabled(false);
                 btnReject.setEnabled(false);
                 btnAdd.setEnabled(false);
                 btnUpdate.setEnabled(false);
                 btnDelete.setEnabled(false);
+                btnExport.setEnabled(true);
+                btnAdd.setLabel("Add New...");
+                break;
+            default:
+                btnApprove.setEnabled(false);
+                btnReject.setEnabled(false);
+                btnAdd.setEnabled(false);
+                btnUpdate.setEnabled(false);
+                btnDelete.setEnabled(false);
+                btnExport.setEnabled(false);
                 break;
         }
     }
 
-    /**
-     * Helper to get the first word (assumed to be ID) from the selected line.
-     * @return The ID as a String, or null if no line is selected or parsable.
-     */
     private String getSelectedId() {
         String selectedLine = taData.getSelectedText();
 
-        // If no text is highlighted, try to get the line at the cursor
         if (selectedLine == null || selectedLine.isEmpty()) {
             try {
                 int caretPos = taData.getCaretPosition();
                 int lineStart = taData.getText().lastIndexOf('\n', caretPos - 1) + 1;
                 int lineEnd = taData.getText().indexOf('\n', caretPos);
-                if (lineEnd == -1) lineEnd = taData.getText().length(); // Last line
+                if (lineEnd == -1) lineEnd = taData.getText().length();
 
                 selectedLine = taData.getText().substring(lineStart, lineEnd);
             } catch (Exception ex) {
@@ -299,7 +403,6 @@ public class AdminDashboard extends Frame implements ActionListener {
             }
         }
 
-        // Ignore header lines
         if (selectedLine.trim().startsWith("ID") || selectedLine.trim().startsWith("---")) {
             lblStatus.setText("Please select a valid data row (not a header).");
             return null;
@@ -307,109 +410,172 @@ public class AdminDashboard extends Frame implements ActionListener {
 
         String[] parts = selectedLine.trim().split("\\s+");
         if (parts.length > 0 && !parts[0].isEmpty()) {
-            return parts[0]; // Return the first part, which is the ID
+            return parts[0];
         } else {
             lblStatus.setText("Could not parse ID from selected line.");
             return null;
         }
     }
 
-    // --- Data Loading Methods ---
+    // --- Data Loading Methods (Accepts filter parameter) ---
 
-    private void loadUsers() {
+    private void loadUsers(String filter) {
         currentView = "USERS";
         updateButtonStates();
         StringBuilder sb = new StringBuilder();
-        // Header
         sb.append(String.format("%-5s | %-20s | %-30s | %-10s%n", "ID", "Name", "Email", "Role"));
         sb.append("------+----------------------+--------------------------------+-----------\n");
+
         String sql = "SELECT user_id, name, email, role FROM users";
+        String whereClause = "";
+        String filterTerm = (filter != null && !filter.isEmpty()) ? filter : "";
+
+        if (!filterTerm.isEmpty()) {
+            whereClause = " WHERE name LIKE ? OR email LIKE ?";
+            sql += whereClause;
+        }
+
         try (Connection conn = DBConnection.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            if (!filterTerm.isEmpty()) {
+                ps.setString(1, "%" + filterTerm + "%");
+                ps.setString(2, "%" + filterTerm + "%");
+            }
 
             int count = 0;
-            while (rs.next()) {
-                sb.append(String.format("%-5d | %-20s | %-30s | %-10s%n",
-                        rs.getInt("user_id"),
-                        rs.getString("name"),
-                        rs.getString("email"),
-                        rs.getString("role")));
-                count++;
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    sb.append(String.format("%-5d | %-20s | %-30s | %-10s%n",
+                            rs.getInt("user_id"),
+                            rs.getString("name"),
+                            rs.getString("email"),
+                            rs.getString("role")));
+                    count++;
+                }
             }
             taData.setText(sb.toString());
-            lblStatus.setText("Loaded " + count + " users.");
+            lblStatus.setText("Loaded " + count + " users." + (filterTerm.isEmpty() ? "" : " (Filtered)"));
         } catch (SQLException ex) {
             taData.setText("DB Error: " + ex.getMessage());
             lblStatus.setText("DB Error loading users.");
         }
     }
 
-    private void loadVehicles() {
+    private void loadVehicles(String filter) {
         currentView = "VEHICLES";
         updateButtonStates();
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("%-5s | %-10s | %-12s | %-10s | %-5s | %-10s | %-5s | %-15s%n",
                 "ID", "Plate", "Type", "Fuel", "Year", "Mileage", "OwnerID", "Owner Name"));
         sb.append("------+------------+--------------+------------+-------+------------+---------+----------------\n");
+
         String sql = "SELECT v.vehicle_id, v.plate_no, v.vehicle_type, v.fuel_type, v.year, v.mileage, v.owner_id, u.name AS owner " +
                 "FROM vehicles v LEFT JOIN users u ON v.owner_id = u.user_id";
+
+        String whereClause = "";
+        String filterTerm = (filter != null && !filter.isEmpty()) ? filter : "";
+        int paramIndex = 1;
+
+        if (!filterTerm.isEmpty()) {
+            whereClause = " WHERE v.plate_no LIKE ? OR v.vehicle_type LIKE ? OR u.name LIKE ?";
+            sql += whereClause;
+        }
+
         try (Connection conn = DBConnection.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            if (!filterTerm.isEmpty()) {
+                ps.setString(paramIndex++, "%" + filterTerm + "%");
+                ps.setString(paramIndex++, "%" + filterTerm + "%");
+                ps.setString(paramIndex++, "%" + filterTerm + "%");
+            }
+
             int count = 0;
-            while (rs.next()) {
-                sb.append(String.format("%-5d | %-10s | %-12s | %-10s | %-5d | %-10.2f | %-7d | %-15s%n",
-                        rs.getInt("vehicle_id"),
-                        rs.getString("plate_no"),
-                        rs.getString("vehicle_type"),
-                        rs.getString("fuel_type"),
-                        rs.getInt("year"),
-                        rs.getDouble("mileage"),
-                        rs.getInt("owner_id"),
-                        rs.getString("owner") != null ? rs.getString("owner") : "N/A"));
-                count++;
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    sb.append(String.format("%-5d | %-10s | %-12s | %-10s | %-5d | %-10.2f | %-7d | %-15s%n",
+                            rs.getInt("vehicle_id"),
+                            rs.getString("plate_no"),
+                            rs.getString("vehicle_type"),
+                            rs.getString("fuel_type"),
+                            rs.getInt("year"),
+                            rs.getDouble("mileage"),
+                            rs.getInt("owner_id"),
+                            rs.getString("owner") != null ? rs.getString("owner") : "N/A"));
+                    count++;
+                }
             }
             taData.setText(sb.toString());
-            lblStatus.setText("Loaded " + count + " vehicles.");
+            lblStatus.setText("Loaded " + count + " vehicles." + (filterTerm.isEmpty() ? "" : " (Filtered)"));
         } catch (SQLException ex) {
             taData.setText("DB Error: " + ex.getMessage());
             lblStatus.setText("DB Error loading vehicles.");
         }
     }
 
-    private void loadPendingOffers() {
+    private void loadPendingOffers(String filter) {
         currentView = "OFFERS";
         updateButtonStates();
+        String filterTerm = (filter != null && !filter.isEmpty()) ? filter : "";
+        loadOffersData("eo.status = 'Pending'", filterTerm, "pending offers");
+    }
+
+    private void loadAllOffers(String filter) {
+        currentView = "ALL_OFFERS";
+        updateButtonStates();
+        String filterTerm = (filter != null && !filter.isEmpty()) ? filter : "";
+        loadOffersData("1=1", filterTerm, "all offers (including history)");
+    }
+
+    private void loadOffersData(String baseWhere, String filter, String statusText) {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("%-5s | %-9s | %-10s | %-10s | %-10s | %-12s | %-15s%n",
-                "ID", "VehicleID", "Value", "Subsidy%", "Plate", "Type", "Owner"));
-        sb.append("------+-----------+------------+------------+------------+--------------+----------------\n");
+        sb.append(String.format("%-5s | %-9s | %-10s | %-10s | %-10s | %-12s | %-10s | %-15s%n",
+                "ID", "VehicleID", "Value", "Subsidy%", "Status", "Plate", "Type", "Owner"));
+        sb.append("------+-----------+------------+------------+------------+--------------+------------+----------------\n");
+
+        String filterTerm = filter.isEmpty() ? "" : filter;
+
         String sql = """
-            SELECT eo.offer_id, eo.vehicle_id, eo.exchange_value, eo.subsidy_percent,
+            SELECT eo.offer_id, eo.vehicle_id, eo.exchange_value, eo.subsidy_percent, eo.status,
                    v.plate_no, v.vehicle_type, u.name
             FROM exchange_offers eo
             LEFT JOIN vehicles v ON eo.vehicle_id = v.vehicle_id
             LEFT JOIN users u ON v.owner_id = u.user_id
-            WHERE eo.status = 'Pending'
-        """;
+            WHERE 
+        """ + baseWhere;
+
+        if (!filterTerm.isEmpty()) {
+            sql += " AND (v.plate_no LIKE ? OR v.vehicle_type LIKE ? OR u.name LIKE ?)";
+        }
+
         try (Connection conn = DBConnection.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            int paramIndex = 1;
+            if (!filterTerm.isEmpty()) {
+                ps.setString(paramIndex++, "%" + filterTerm + "%");
+                ps.setString(paramIndex++, "%" + filterTerm + "%");
+                ps.setString(paramIndex++, "%" + filterTerm + "%");
+            }
+
             int count = 0;
-            while (rs.next()) {
-                sb.append(String.format("%-5d | %-9d | %-10.2f | %-10.2f | %-10s | %-12s | %-15s%n",
-                        rs.getInt("offer_id"),
-                        rs.getInt("vehicle_id"),
-                        rs.getDouble("exchange_value"),
-                        rs.getDouble("subsidy_percent"),
-                        rs.getString("plate_no") != null ? rs.getString("plate_no") : "N/A",
-                        rs.getString("vehicle_type") != null ? rs.getString("vehicle_type") : "N/A",
-                        rs.getString("name") != null ? rs.getString("name") : "N/A"));
-                count++;
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    sb.append(String.format("%-5d | %-9d | %-10.2f | %-10.2f | %-10s | %-12s | %-10s | %-15s%n",
+                            rs.getInt("offer_id"),
+                            rs.getInt("vehicle_id"),
+                            rs.getDouble("exchange_value"),
+                            rs.getDouble("subsidy_percent"),
+                            rs.getString("status"),
+                            rs.getString("plate_no") != null ? rs.getString("plate_no") : "N/A",
+                            rs.getString("vehicle_type") != null ? rs.getString("vehicle_type") : "N/A",
+                            rs.getString("name") != null ? rs.getString("name") : "N/A"));
+                    count++;
+                }
             }
             taData.setText(sb.toString());
-            lblStatus.setText("Loaded " + count + " pending offers.");
+            lblStatus.setText("Loaded " + count + " " + statusText + "." + (filterTerm.isEmpty() ? "" : " (Filtered)"));
         } catch (SQLException ex) {
             taData.setText("DB Error: " + ex.getMessage());
             lblStatus.setText("DB Error loading offers.");
@@ -420,16 +586,16 @@ public class AdminDashboard extends Frame implements ActionListener {
 
     private void processSelectedOffer(String newStatus) {
         if (!currentView.equals("OFFERS")) {
-            lblStatus.setText("Please load Offers to approve or reject.");
+            lblStatus.setText("Please load the **Pending Offers** view to approve or reject.");
             return;
         }
 
         String idStr = getSelectedId();
-        if (idStr == null) return; // Error message already set by getSelectedId()
+        if (idStr == null) return;
 
         try {
             int offerId = Integer.parseInt(idStr);
-            String sql = "UPDATE exchange_offers SET status=? WHERE offer_id=?";
+            String sql = "UPDATE exchange_offers SET status=? WHERE offer_id=? AND status='Pending'";
             try (Connection conn = DBConnection.getConnection();
                  PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setString(1, newStatus);
@@ -437,10 +603,10 @@ public class AdminDashboard extends Frame implements ActionListener {
                 int updated = ps.executeUpdate();
                 if (updated > 0) {
                     lblStatus.setText("✅ Offer " + offerId + " set to " + newStatus + ".");
-                    loadPendingOffers(); // Refresh list
-                    statsCanvas.repaint(); // Refresh chart
+                    loadPendingOffers(null); // Reload view without filter
+                    statsPanel.refresh(); // Refresh the report panel after a status change
                 } else {
-                    lblStatus.setText("Offer " + offerId + " not found or not updated.");
+                    lblStatus.setText("Offer " + offerId + " not found, already processed, or not updated.");
                 }
             }
         } catch (NumberFormatException ex) {
@@ -450,16 +616,14 @@ public class AdminDashboard extends Frame implements ActionListener {
         }
     }
 
-    // --- CRUD Handlers ---
+    // --- CRUD Handlers (Unmodified for brevity) ---
 
     private void handleAdd() {
         switch (currentView) {
             case "USERS":
-                // Open the Add User Dialog
                 new AddUserDialog(this);
                 break;
             case "VEHICLES":
-                // Open the Add Vehicle Dialog
                 new AddVehicleDialog(this);
                 break;
             default:
@@ -471,20 +635,31 @@ public class AdminDashboard extends Frame implements ActionListener {
         String idStr = getSelectedId();
         if (idStr == null) return;
 
-        // We need the *full line* of data to pre-fill the dialog
         String selectedLine = taData.getSelectedText();
         if (selectedLine == null || selectedLine.isEmpty()) {
-            lblStatus.setText("Please highlight the full line to update.");
+            try {
+                int caretPos = taData.getCaretPosition();
+                int lineStart = taData.getText().lastIndexOf('\n', caretPos - 1) + 1;
+                int lineEnd = taData.getText().indexOf('\n', caretPos);
+                if (lineEnd == -1) lineEnd = taData.getText().length();
+                selectedLine = taData.getText().substring(lineStart, lineEnd);
+            } catch (Exception ex) {
+                lblStatus.setText("Please highlight the full line to update.");
+                return;
+            }
+        }
+
+        if (selectedLine.trim().startsWith("ID") || selectedLine.trim().startsWith("---")) {
+            lblStatus.setText("Please highlight a valid data row to update.");
             return;
         }
 
+
         switch (currentView) {
             case "USERS":
-                // Open the Update User Dialog
                 new UpdateUserDialog(this, selectedLine.trim());
                 break;
             case "VEHICLES":
-                // Open the Update Vehicle Dialog
                 new UpdateVehicleDialog(this, selectedLine.trim());
                 break;
             default:
@@ -496,7 +671,6 @@ public class AdminDashboard extends Frame implements ActionListener {
         String idStr = getSelectedId();
         if (idStr == null) return;
 
-        // Show confirmation dialog
         ConfirmDialog confirmDialog = new ConfirmDialog(this,
                 "Delete Record?",
                 "Are you sure you want to delete " + currentView + " record ID: " + idStr + "?");
@@ -506,7 +680,6 @@ public class AdminDashboard extends Frame implements ActionListener {
             return;
         }
 
-        // User confirmed, proceed with delete
         String table = "";
         String idColumn = "";
         switch (currentView) {
@@ -532,16 +705,14 @@ public class AdminDashboard extends Frame implements ActionListener {
 
             if (deleted > 0) {
                 lblStatus.setText("✅ Record " + idStr + " deleted from " + table + ".");
-                // Refresh the view
-                if (currentView.equals("USERS")) loadUsers();
-                if (currentView.equals("VEHICLES")) loadVehicles();
+                if (currentView.equals("USERS")) loadUsers(null); // FIX: Pass null
+                if (currentView.equals("VEHICLES")) loadVehicles(null); // FIX: Pass null
             } else {
                 lblStatus.setText("Record " + idStr + " not found or not deleted.");
             }
         } catch (NumberFormatException ex) {
             lblStatus.setText("Error: Selected ID '" + idStr + "' is not a valid number.");
         } catch (SQLException ex) {
-            // Handle foreign key constraint violations
             if (ex.getMessage().contains("foreign key constraint")) {
                 lblStatus.setText("Error: Cannot delete record " + idStr + ". It is being used by other records.");
             } else {
@@ -550,79 +721,13 @@ public class AdminDashboard extends Frame implements ActionListener {
         }
     }
 
-    // --- Inner class: Stats Canvas ---
-    class StatsCanvas extends Canvas {
-        @Override
-        public void paint(Graphics g) {
-            int w = getWidth();
-            int h = getHeight();
-            g.setColor(Color.WHITE); // Clear background
-            g.fillRect(0, 0, w, h);
+    // --- Helper Dialog Classes (Unmodified for brevity) ---
 
-            g.setColor(Color.BLACK);
-            int x = 20, y = 30;
-            g.setFont(new Font("Arial", Font.BOLD, 14));
-            g.drawString("📊 Approved Offers Statistics", x, y);
-
-            int totalApproved = 0;
-            double totalValue = 0;
-
-            String sql = "SELECT COUNT(*) AS totalApproved, IFNULL(SUM(exchange_value),0) AS totalValue " +
-                    "FROM exchange_offers WHERE status='Approved'";
-            try (Connection conn = DBConnection.getConnection();
-                 Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery(sql)) {
-                if (rs.next()) {
-                    totalApproved = rs.getInt("totalApproved");
-                    totalValue = rs.getDouble("totalValue");
-                }
-            } catch (SQLException ex) {
-                g.setColor(Color.RED);
-                g.drawString("DB Error: " + ex.getMessage(), x, y + 25);
-                return;
-            }
-
-            g.setFont(new Font("Arial", Font.PLAIN, 12));
-            g.setColor(Color.BLACK);
-
-            // --- Bar 1: Count ---
-            String countLabel = "Total Approved Offers: " + totalApproved;
-            g.drawString(countLabel, x, y + 25);
-
-            // Scale: 20 pixels per offer, max 800 pixels
-            int countBarLength = Math.min(800, totalApproved * 20);
-            g.drawRect(x, y + 40, 820, 25); // Bar outline
-            g.setColor(Color.GREEN);
-            g.fillRect(x + 1, y + 41, countBarLength, 24);
-
-            // --- Bar 2: Value ---
-            g.setColor(Color.BLACK);
-            String valueLabel = "Total Exchange Value: $" + String.format("%.2f", totalValue);
-            g.drawString(valueLabel, x, y + 85);
-
-            // Scale: 1 pixel per $1000, max 800 pixels
-            int valueBarLength = Math.min(800, (int)(totalValue / 1000));
-            g.drawRect(x, y + 100, 820, 25); // Bar outline
-            g.setColor(Color.BLUE);
-            g.fillRect(x + 1, y + 101, valueBarLength, 24);
-
-            // Legend
-            g.setColor(Color.BLACK);
-            g.setFont(new Font("Arial", Font.ITALIC, 12));
-            g.drawString("Green Bar: Offer Count (1 offer = 20px). Blue Bar: Total Value (1k = 1px).", x, y + 140);
-        }
-    }
-
-    // --- Helper Dialog Classes ---
-
-    /**
-     * A generic, modal "Are you sure?" dialog.
-     */
     class ConfirmDialog extends Dialog implements ActionListener {
         private boolean confirmed = false;
 
         ConfirmDialog(Frame owner, String title, String message) {
-            super(owner, title, true); // true = modal
+            super(owner, title, true);
             setLayout(new BorderLayout(10, 10));
 
             add(new Label(message, Label.CENTER), BorderLayout.CENTER);
@@ -649,7 +754,7 @@ public class AdminDashboard extends Frame implements ActionListener {
             addWindowListener(new WindowAdapter() {
                 public void windowClosing(WindowEvent e) { dispose(); }
             });
-            setVisible(true); // Blocks until disposed
+            setVisible(true);
         }
 
         public boolean isConfirmed() { return confirmed; }
@@ -658,21 +763,18 @@ public class AdminDashboard extends Frame implements ActionListener {
         public void actionPerformed(ActionEvent e) { /* Handled by lambdas */ }
     }
 
-    /**
-     * A generic base class for Add/Update dialogs
-     */
     abstract class CrudDialog extends Dialog implements ActionListener {
         protected Panel gridPanel;
         protected Button btnSave, btnCancel;
         protected Label lblError;
-        protected AdminDashboard parent; // To call refresh methods
+        protected AdminDashboard parent;
 
         CrudDialog(Frame owner, String title) {
-            super(owner, title, true); // Modal
+            super(owner, title, true);
             this.parent = (AdminDashboard) owner;
             setLayout(new BorderLayout(10, 10));
 
-            gridPanel = new Panel(new GridLayout(0, 2, 5, 5)); // 0 rows = dynamic
+            gridPanel = new Panel(new GridLayout(0, 2, 5, 5));
             add(gridPanel, BorderLayout.CENTER);
 
             lblError = new Label("", Label.CENTER);
@@ -701,7 +803,6 @@ public class AdminDashboard extends Frame implements ActionListener {
         }
     }
 
-    // --- Dialog for Adding a User ---
     class AddUserDialog extends CrudDialog {
         TextField txtName, txtEmail, txtRole;
 
@@ -723,13 +824,17 @@ public class AdminDashboard extends Frame implements ActionListener {
 
         @Override
         public void actionPerformed(ActionEvent e) {
-            // Save button clicked
             String name = txtName.getText();
             String email = txtEmail.getText();
             String role = txtRole.getText();
 
             if (name.isEmpty() || email.isEmpty() || role.isEmpty()) {
                 lblError.setText("All fields are required.");
+                return;
+            }
+
+            if (!role.equalsIgnoreCase("admin") && !role.equalsIgnoreCase("user")) {
+                lblError.setText("Role must be 'admin' or 'user'.");
                 return;
             }
 
@@ -740,20 +845,25 @@ public class AdminDashboard extends Frame implements ActionListener {
                 ps.setString(1, name);
                 ps.setString(2, email);
                 ps.setString(3, role);
-                ps.setString(4, "temp_pass"); // Default password
+                ps.setString(4, "temp_pass");
 
-                ps.executeUpdate();
-                parent.lblStatus.setText("✅ User '" + name + "' added.");
-                parent.loadUsers(); // Refresh the list
-                dispose();
+                int added = ps.executeUpdate();
+                if(added > 0) {
+                    parent.lblStatus.setText("✅ User '" + name + "' added.");
+                    parent.loadUsers(null); // FIX: Pass null
+                    dispose();
+                }
 
             } catch (SQLException ex) {
-                lblError.setText("DB Error: " + ex.getMessage());
+                if (ex.getMessage().contains("Duplicate entry")) {
+                    lblError.setText("DB Error: Email address already exists.");
+                } else {
+                    lblError.setText("DB Error: " + ex.getMessage());
+                }
             }
         }
     }
 
-    // --- Dialog for Updating a User ---
     class UpdateUserDialog extends CrudDialog {
         TextField txtName, txtEmail, txtRole;
         int userId;
@@ -769,9 +879,7 @@ public class AdminDashboard extends Frame implements ActionListener {
             addField("Email:", txtEmail);
             addField("Role (admin/user):", txtRole);
 
-            // Parse the selected line to pre-fill fields
             try {
-                // "ID | Name | Email | Role"
                 String[] parts = selectedLine.split("\\s*\\|\\s*");
                 this.userId = Integer.parseInt(parts[0].trim());
                 txtName.setText(parts[1].trim());
@@ -789,13 +897,17 @@ public class AdminDashboard extends Frame implements ActionListener {
 
         @Override
         public void actionPerformed(ActionEvent e) {
-            // Save button clicked
             String name = txtName.getText();
             String email = txtEmail.getText();
             String role = txtRole.getText();
 
             if (name.isEmpty() || email.isEmpty() || role.isEmpty()) {
                 lblError.setText("All fields are required.");
+                return;
+            }
+
+            if (!role.equalsIgnoreCase("admin") && !role.equalsIgnoreCase("user")) {
+                lblError.setText("Role must be 'admin' or 'user'.");
                 return;
             }
 
@@ -810,16 +922,19 @@ public class AdminDashboard extends Frame implements ActionListener {
 
                 ps.executeUpdate();
                 parent.lblStatus.setText("✅ User " + this.userId + " updated.");
-                parent.loadUsers(); // Refresh the list
+                parent.loadUsers(null); // FIX: Pass null
                 dispose();
 
             } catch (SQLException ex) {
-                lblError.setText("DB Error: ".concat(ex.getMessage()));
+                if (ex.getMessage().contains("Duplicate entry")) {
+                    lblError.setText("DB Error: Email address already exists.");
+                } else {
+                    lblError.setText("DB Error: ".concat(ex.getMessage()));
+                }
             }
         }
     }
 
-    // --- Dialog for Adding a Vehicle ---
     class AddVehicleDialog extends CrudDialog {
         TextField txtPlate, txtType, txtFuel, txtYear, txtMileage, txtOwnerId;
 
@@ -834,7 +949,7 @@ public class AdminDashboard extends Frame implements ActionListener {
             txtOwnerId = new TextField(5);
 
             addField("Plate No:", txtPlate);
-            addField("Type (e.g., Sedan):", txtType);
+            addField("Type (e.g., Car):", txtType);
             addField("Fuel (e.g., Petrol):", txtFuel);
             addField("Year:", txtYear);
             addField("Mileage:", txtMileage);
@@ -847,7 +962,6 @@ public class AdminDashboard extends Frame implements ActionListener {
 
         @Override
         public void actionPerformed(ActionEvent e) {
-            // Save button clicked
             try {
                 String sql = "INSERT INTO vehicles (plate_no, vehicle_type, fuel_type, year, mileage, owner_id) VALUES (?, ?, ?, ?, ?, ?)";
                 try (Connection conn = DBConnection.getConnection();
@@ -862,7 +976,7 @@ public class AdminDashboard extends Frame implements ActionListener {
 
                     ps.executeUpdate();
                     parent.lblStatus.setText("✅ Vehicle '" + txtPlate.getText() + "' added.");
-                    parent.loadVehicles(); // Refresh the list
+                    parent.loadVehicles(null); // FIX: Pass null
                     dispose();
                 }
             } catch (NumberFormatException nfe) {
@@ -870,6 +984,8 @@ public class AdminDashboard extends Frame implements ActionListener {
             } catch (SQLException ex) {
                 if(ex.getMessage().contains("foreign key constraint")) {
                     lblError.setText("DB Error: Owner ID " + txtOwnerId.getText() + " does not exist.");
+                } else if(ex.getMessage().contains("plate_no")) {
+                    lblError.setText("DB Error: Plate number already exists.");
                 } else {
                     lblError.setText("DB Error: " + ex.getMessage());
                 }
@@ -877,7 +993,6 @@ public class AdminDashboard extends Frame implements ActionListener {
         }
     }
 
-    // --- Dialog for Updating a Vehicle ---
     class UpdateVehicleDialog extends CrudDialog {
         TextField txtPlate, txtType, txtFuel, txtYear, txtMileage, txtOwnerId;
         int vehicleId;
@@ -893,16 +1008,15 @@ public class AdminDashboard extends Frame implements ActionListener {
             txtOwnerId = new TextField(5);
 
             addField("Plate No:", txtPlate);
-            addField("Type (e.g., Sedan):", txtType);
+            addField("Type (e.g., Car):", txtType);
             addField("Fuel (e.g., Petrol):", txtFuel);
             addField("Year:", txtYear);
             addField("Mileage:", txtMileage);
             addField("Owner User ID:", txtOwnerId);
 
-            // Parse the selected line to pre-fill fields
             try {
-                // "ID | Plate | Type | Fuel | Year | Mileage | OwnerID | Owner Name"
-                String[] parts = selectedLine.split("\\s*\\|\\s*");
+                String[] parts = selectedLine.trim().split("\\s*\\|\\s*");
+
                 this.vehicleId = Integer.parseInt(parts[0].trim());
                 txtPlate.setText(parts[1].trim());
                 txtType.setText(parts[2].trim());
@@ -910,9 +1024,9 @@ public class AdminDashboard extends Frame implements ActionListener {
                 txtYear.setText(parts[4].trim());
                 txtMileage.setText(parts[5].trim());
                 txtOwnerId.setText(parts[6].trim());
+
             } catch (Exception ex) {
-                ex.printStackTrace();
-                lblError.setText("Error parsing selected line: " + ex.getMessage());
+                lblError.setText("Error parsing selected line: " + ex.getMessage() + ". Try selecting the full line carefully.");
                 btnSave.setEnabled(false);
             }
 
@@ -923,7 +1037,6 @@ public class AdminDashboard extends Frame implements ActionListener {
 
         @Override
         public void actionPerformed(ActionEvent e) {
-            // Save button clicked
             try {
                 String sql = "UPDATE vehicles SET plate_no=?, vehicle_type=?, fuel_type=?, year=?, mileage=?, owner_id=? WHERE vehicle_id=?";
                 try (Connection conn = DBConnection.getConnection();
@@ -939,7 +1052,7 @@ public class AdminDashboard extends Frame implements ActionListener {
 
                     ps.executeUpdate();
                     parent.lblStatus.setText("✅ Vehicle " + this.vehicleId + " updated.");
-                    parent.loadVehicles(); // Refresh the list
+                    parent.loadVehicles(null); // FIX: Pass null
                     dispose();
                 }
             } catch (NumberFormatException nfe) {
@@ -947,6 +1060,8 @@ public class AdminDashboard extends Frame implements ActionListener {
             } catch (SQLException ex) {
                 if(ex.getMessage().contains("foreign key constraint")) {
                     lblError.setText("DB Error: Owner ID " + txtOwnerId.getText() + " does not exist.");
+                } else if(ex.getMessage().contains("plate_no")) {
+                    lblError.setText("DB Error: Plate number already exists.");
                 } else {
                     lblError.setText("DB Error: " + ex.getMessage());
                 }
@@ -957,27 +1072,6 @@ public class AdminDashboard extends Frame implements ActionListener {
 
     // Main method for testing
     public static void main(String[] args) {
-        // You MUST configure your DBConnection class first
-        // Example (you will need your own details):
-        /*
-        try {
-            // Set the connection details for your DBConnection class
-            db.DBConnection.setURL("jdbc:mysql://localhost:3306/your_db_name", "your_username", "your_password");
-        } catch (Exception e) {
-            e.printStackTrace();
-            // Show a simple AWT dialog if connection fails
-            Frame errorFrame = new Frame("DB Connection Error");
-            errorFrame.add(new TextArea("Could not set DB connection details:\n" + e.getMessage()));
-            errorFrame.pack();
-            errorFrame.addWindowListener(new WindowAdapter() {
-                public void windowClosing(WindowEvent we) { System.exit(1); }
-            });
-            errorFrame.setVisible(true);
-            return;
-        }
-        */
-
-        // Once DB is configured, run the dashboard
         new AdminDashboard();
     }
 }
