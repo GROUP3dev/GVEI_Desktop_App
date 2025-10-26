@@ -1,0 +1,5 @@
+offer_id,vehicle_id,exchange_value,subsidy_percent,status
+1,1,8000.00,20.00,Approved
+2,3,5000.00,15.00,Approved
+3,2,6000.00,18.00,Approved
+4,4,10000.00,25.00,Rejected
